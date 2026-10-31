@@ -4,7 +4,6 @@ import { documentTypesApi } from '@/api/documentTypes';
 import { documentsApi } from '@/api/documents';
 import { useOfflineQueueStore, OfflineQueueItem } from '@/store/offlineQueueStore';
 import { Alert } from 'react-native';
-import * as FileSystem from 'expo-file-system/legacy';
 
 type NameIdMap = Map<string, number>;
 
@@ -153,10 +152,7 @@ const syncDocuments = async (
         document_type: validDocumentTypeId,
       });
 
-      // copies kept by the share feature for later sending are not needed once uploaded
-      if (data.fileUri.startsWith(`${FileSystem.documentDirectory}shared/`)) {
-        FileSystem.deleteAsync(data.fileUri, { idempotent: true }).catch(() => undefined);
-      }
+      // done: off the queue; a copy kept by the share feature is deleted with it (removeItem)
       await removeItem(item.id);
     } catch (err) {
       // No answer from the server (offline, timeout) or an expired login is not the document's fault: keep it pending

@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as FileSystem from 'expo-file-system/legacy';
 
 const OFFLINE_QUEUE_KEY = 'offline_queue';
 
@@ -29,7 +30,8 @@ export interface OfflineQueueItem {
 
 interface OfflineQueueState {
   items: OfflineQueueItem[];
-  addItem: (item: Omit<OfflineQueueItem, 'id' | 'status' | 'createdAt'>) => void;
+  /** Returns the new item's id (null when a same-named tag/correspondent/type is already queued). */
+  addItem: (item: Omit<OfflineQueueItem, 'id' | 'status' | 'createdAt'>) => string | null;
   updateItemStatus: (id: string, status: OfflineItemStatus, error?: string) => void;
   updateItemData: (id: string, data: Partial<OfflineQueueItem['data']>) => void;
   removeItem: (id: string) => Promise<void>;
@@ -42,6 +44,15 @@ interface OfflineQueueState {
 }
 
 let hydrating: Promise<void> | null = null;
+
+const SHARED_DIR = `${FileSystem.documentDirectory}shared/`;
+const dropSharedCopies = async (items: OfflineQueueItem[]) => {
+  for (const i of items) {
+    const uri = i.data.fileUri;
+    if (uri && uri.startsWith(SHARED_DIR))
+      await FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => undefined);
+  }
+};
 
 let idCounter = 0;
 const generateId = (): string => {
@@ -62,7 +73,7 @@ export const useOfflineQueueStore = create<OfflineQueueState>((set, get) => ({
       const exists = get().items.some(
         (i) => i.type === item.type && i.data.name?.toLowerCase() === nameLower,
       );
-      if (exists) return;
+      if (exists) return null;
     }
     const newItem: OfflineQueueItem = {
       ...item,
@@ -73,6 +84,7 @@ export const useOfflineQueueStore = create<OfflineQueueState>((set, get) => ({
     const updated = [...get().items, newItem];
     set({ items: updated });
     get()._persist(updated);
+    return newItem.id;
   },
 
   updateItemStatus: (id, status, error) => {
@@ -91,16 +103,21 @@ export const useOfflineQueueStore = create<OfflineQueueState>((set, get) => ({
     get()._persist(updated);
   },
 
+  // the copy the share feature keeps of a shared file goes with its item (sent or discarded)
   removeItem: async (id) => {
+    const gone = get().items.filter((item) => item.id === id);
     const updated = get().items.filter((item) => item.id !== id);
     set({ items: updated });
     await get()._persist(updated);
+    await dropSharedCopies(gone);
   },
 
   clearFailed: () => {
+    const gone = get().items.filter((item) => item.status === 'failed');
     const updated = get().items.filter((item) => item.status !== 'failed');
     set({ items: updated });
     get()._persist(updated);
+    dropSharedCopies(gone);
   },
 
   pendingCount: () =>
