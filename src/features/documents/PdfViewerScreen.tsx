@@ -11,10 +11,11 @@ import { DocumentsStackParamList } from '@/navigation/types';
 type Props = NativeStackScreenProps<DocumentsStackParamList, 'PdfViewer'>;
 
 // The viewer page reads the PDF file itself (pdf.js loads it from its file:// address) instead of being handed the
-// whole document as one base64 string: a ~50 MB PDF became a ~66 MB string and the app ran out of memory
-// (OutOfMemoryError in readAsStringAsync). pdf.js ships inside the app (android/app/src/main/assets/pdfjs, 3.11.174
-// from npm, Apache-2.0), so the viewer also works with no internet connection. Both scripts are loaded as plain
-// scripts, so pdf.js parses on the page itself (no Worker from file://).
+// whole document as one base64 string: a ~50 MB PDF became a ~66 MB string in the app's Java heap and failed with
+// OutOfMemoryError in readAsStringAsync. The file is now loaded only inside the WebView's own process. pdf.js ships
+// with the app (android/app/src/main/assets/pdfjs, copied from the pdfjs-dist dependency by
+// plugins/withPdfjsAssets.js), so the viewer also works with no internet connection. The worker script is loaded
+// as a plain script, so pdf.js runs its worker code on the page (no Worker is started from a file:// URL).
 const buildViewerHtml = (pdfUri: string): string => `
 <!DOCTYPE html>
 <html>

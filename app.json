@@ -40,6 +40,7 @@
       "./plugins/withAndroidSigning",
       "./plugins/withGradleProperties",
       "./plugins/withDependenciesInfo",
+      "./plugins/withPdfjsAssets",
       [
         "./plugins/withJscFlavor",
         {
