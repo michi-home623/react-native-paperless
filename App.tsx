@@ -10,9 +10,11 @@ import NetInfo from '@react-native-community/netinfo';
 import { useTranslation } from 'react-i18next';
 import { AppNavigator } from '@/navigation/AppNavigator';
 import { ShareIntentHandler } from '@/components/ShareIntentHandler';
+import { AutoSync } from '@/components/AutoSync';
 import { useAuthStore } from '@/store/authStore';
 import { useSettingsStore } from '@/store/settingsStore';
 import { useNetworkStore, NetworkStatus } from '@/store/networkStore';
+import { useOfflineQueueStore } from '@/store/offlineQueueStore';
 import { useAppTheme } from '@/theme';
 import i18n from '@/i18n';
 
@@ -78,6 +80,7 @@ export default function App() {
 
   useEffect(() => {
     restoreSession();
+    useOfflineQueueStore.getState()._hydrate();
     loadSettings();
   }, [restoreSession, loadSettings]);
 
@@ -113,6 +116,7 @@ export default function App() {
             </Banner>
             <AppNavigator />
             <ShareIntentHandler />
+            <AutoSync />
             <StatusBar hidden />
           </PaperProvider>
         </QueryClientProvider>
