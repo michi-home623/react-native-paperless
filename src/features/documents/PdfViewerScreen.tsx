@@ -10,7 +10,12 @@ import { DocumentsStackParamList } from '@/navigation/types';
 
 type Props = NativeStackScreenProps<DocumentsStackParamList, 'PdfViewer'>;
 
-const buildViewerHtml = (base64: string): string => `
+// The viewer page reads the PDF file itself (pdf.js loads it from its file:// address) instead of being handed the
+// whole document as one base64 string: a ~50 MB PDF became a ~66 MB string and the app ran out of memory
+// (OutOfMemoryError in readAsStringAsync). pdf.js ships inside the app (android/app/src/main/assets/pdfjs, 3.11.174
+// from npm, Apache-2.0), so the viewer also works with no internet connection. Both scripts are loaded as plain
+// scripts, so pdf.js parses on the page itself (no Worker from file://).
+const buildViewerHtml = (pdfUri: string): string => `
 <!DOCTYPE html>
 <html>
 <head>
@@ -27,19 +32,16 @@ const buildViewerHtml = (base64: string): string => `
 </head>
 <body>
   <div id="viewer"><p class="msg">Rendering…</p></div>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script src="file:///android_asset/pdfjs/pdf.min.js"></script>
+  <script src="file:///android_asset/pdfjs/pdf.worker.min.js"></script>
   <script>
-    pdfjsLib.GlobalWorkerOptions.workerSrc =
-      'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
     try {
-      var raw = atob('${base64}');
-      var uint8 = new Uint8Array(raw.length);
-      for (var i = 0; i < raw.length; i++) uint8[i] = raw.charCodeAt(i);
+      pdfjsLib.GlobalWorkerOptions.workerSrc = 'file:///android_asset/pdfjs/pdf.worker.min.js';
 
       // Pages are drawn at the screen's real resolution (devicePixelRatio) instead of 1 CSS px = 1 canvas px,
       // which looked blurry on high-density screens. They are redrawn sharper after a pinch-zoom, and only pages
       // near the viewport keep a bitmap, so long documents don't run the WebView out of memory.
-      pdfjsLib.getDocument({ data: uint8 }).promise.then(function (pdf) {
+      pdfjsLib.getDocument({ url: ${JSON.stringify(pdfUri).replace(/</g, '\\u003c')}, disableRange: true, disableStream: true }).promise.then(function (pdf) {
         var viewer = document.getElementById('viewer');
         viewer.innerHTML = '';
         var dpr = window.devicePixelRatio || 1;
@@ -148,12 +150,7 @@ export const PdfViewerScreen: React.FC<Props> = ({ route }) => {
           return;
         }
 
-        const base64 = await FileSystem.readAsStringAsync(pdfPath, {
-          encoding: FileSystem.EncodingType.Base64,
-        });
-        if (cancelled) return;
-
-        const html = buildViewerHtml(base64);
+        const html = buildViewerHtml(pdfPath);
         const htmlPath = `${FileSystem.cacheDirectory}viewer_${documentId}.html`;
         await FileSystem.writeAsStringAsync(htmlPath, html);
         if (cancelled) return;
@@ -206,6 +203,9 @@ export const PdfViewerScreen: React.FC<Props> = ({ route }) => {
         allowFileAccess
         allowFileAccessFromFileURLs
         mixedContentMode="always"
+        // the PDF now lives in the WebView's own process: if Android stops it (very low memory), say so instead of
+        // showing an empty screen
+        onRenderProcessGone={() => setError(t('common.error'))}
       />
     </View>
   );
