@@ -45,7 +45,8 @@ interface OfflineQueueState {
 
 let hydrating: Promise<void> | null = null;
 
-const SHARED_DIR = `${FileSystem.documentDirectory}shared/`;
+/** Where the share feature keeps its copies of shared files until they are uploaded. */
+export const SHARED_DIR = `${FileSystem.documentDirectory}shared/`;
 const dropSharedCopies = async (items: OfflineQueueItem[]) => {
   for (const i of items) {
     const uri = i.data.fileUri;

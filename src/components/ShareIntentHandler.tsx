@@ -8,9 +8,8 @@ import * as FileSystem from 'expo-file-system/legacy';
 import { syncAll } from '@/services/syncService';
 import { useAuthStore } from '@/store/authStore';
 import { useNetworkStore, NetworkStatus } from '@/store/networkStore';
-import { useOfflineQueueStore } from '@/store/offlineQueueStore';
+import { SHARED_DIR, useOfflineQueueStore } from '@/store/offlineQueueStore';
 
-export const SHARED_DIR = `${FileSystem.documentDirectory}shared/`;
 const toUri = (path: string) =>
   path.startsWith('file://') || path.startsWith('content://') ? path : `file://${path}`;
 /** True only for copies inside the app cache - never delete a path that may be the user's original file. */
@@ -21,7 +20,9 @@ const nameOf = (f: ShareIntentFile) => f.fileName || f.path.split('/').pop() || 
 /** Shared files live in the app cache: copy them somewhere permanent before queueing them for later. */
 const keepCopy = async (f: ShareIntentFile): Promise<string> => {
   await FileSystem.makeDirectoryAsync(SHARED_DIR, { intermediates: true }).catch(() => undefined);
-  const target = `${SHARED_DIR}${Date.now()}_${nameOf(f).replace(/[^\w.\-]+/g, '_')}`;
+  // time + random part: two files with the same name in one share must not overwrite each other
+  const stamp = `${Date.now()}${Math.random().toString(36).slice(2, 6)}`;
+  const target = `${SHARED_DIR}${stamp}_${nameOf(f).replace(/[^\w.\-]+/g, '_')}`;
   await FileSystem.copyAsync({ from: toUri(f.path), to: target });
   return target;
 };
@@ -46,6 +47,8 @@ export const ShareIntentHandler: React.FC = () => {
   const [done, setDone] = useState(0); // bumped after each batch: a share that came in meanwhile is picked up then
 
   const files = (shareIntent.files ?? []).filter((f) => !!f.path);
+  const latest = useRef(files);
+  latest.current = files;
 
   useEffect(() => {
     // text/links are not documents: drop them silently
@@ -64,8 +67,6 @@ export const ShareIntentHandler: React.FC = () => {
         for (const f of batch) {
           try {
             const uri = await keepCopy(f);
-            if (inCache(f.path))
-              FileSystem.deleteAsync(toUri(f.path), { idempotent: true }).catch(() => undefined);
             const id = addItem({
               type: 'document',
               data: {
@@ -80,16 +81,26 @@ export const ShareIntentHandler: React.FC = () => {
             failed++;
           }
         }
-        resetShareIntent(); // only now: until every file is copied, the share itself is the only reference to them
+        // the queue is stored before the share's own copies go: until then they are the only reference to the files
+        await useOfflineQueueStore.getState()._persist(useOfflineQueueStore.getState().items);
+        for (const f of batch) {
+          if (inCache(f.path))
+            FileSystem.deleteAsync(toUri(f.path), { idempotent: true }).catch(() => undefined);
+        }
+        // reset only if no other share came in while these were copied (that one is handled next, see `done`)
+        const same =
+          latest.current.length === batch.length &&
+          latest.current.every((f, i) => f.path === batch[i].path);
+        if (same) resetShareIntent();
         if (ids.length) setMessage(t('shareIntent.sending', { count: ids.length }));
         const { isAuthenticated, token } = useAuthStore.getState();
-        // twice: a sync already under way when these were added does not include them
-        for (let round = 0; round < 2; round++) {
-          const waiting = useOfflineQueueStore
-            .getState()
-            .items.some((i) => ids.includes(i.id) && i.status === 'pending');
-          if (!waiting || !ids.length || !isAuthenticated || !token) break;
-          if (useNetworkStore.getState().status !== NetworkStatus.Online) break;
+        // syncAll runs again by itself if a sync was already under way, so one call covers these files
+        if (
+          ids.length &&
+          isAuthenticated &&
+          token &&
+          useNetworkStore.getState().status === NetworkStatus.Online
+        ) {
           await syncAll({ includeFailed: false }).catch(() => undefined);
         }
         const left = useOfflineQueueStore.getState().items.filter((i) => ids.includes(i.id));
